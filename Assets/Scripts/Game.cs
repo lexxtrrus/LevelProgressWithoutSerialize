@@ -2,124 +2,173 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using UnityEngine;
 using UnityEngine.UI;
+using Random = System.Random;
+using Vector3 = UnityEngine.Vector3;
 
 public class Game : MonoBehaviour
 {
-    [SerializeField] private List<LevelButton> _levelButtons;
-    [SerializeField] private Button previousPageButton;
-    [SerializeField] private Button nextPageButton;
+    [SerializeField] private List<ChooseLevelButton> _levelButtons;
     [SerializeField] private List<Canvas> canvases;
     [SerializeField] private List<LevelData> _levelDatas;
     [SerializeField] private GameObject[] resultStars;
-    
-    private int stars;
-    private int _currentPage;
-    private bool _isAwatingCallback = false;
-    private bool _isLevelEnd = false;
-    private Coroutine _coroutine;
+    [SerializeField] private LevelConfigPanel _levelConfigPanel;
+    [SerializeField] private List<Sprite> _sprites;
+    [SerializeField] private Slider timer;
+
     private LevelData _currentLevel;
-    
+    private int stars;
+    private int tapCount;
+    public bool isGameLoop = false;
+    private bool _isLevelEnd = false;
+    private float duration = 0;
+    private float endTime;
     public delegate void LevelComplete(LevelData levelData);
     public event LevelComplete OnLevelComplete;
     
     private void Awake()
     {
-        _currentPage = 0;
-        previousPageButton.gameObject.SetActive(false);
-        SubscribePageButtons();
+        TurnOnCanvas(0);
         LoadLevelsData();
+
+        _levelConfigPanel.OnPlayPressed += StartGame;
+        _levelConfigPanel.OnClosePressed += CloseLevelConfigPanel;
     }
 
     private void LoadLevelsData()
     {
         _levelDatas = new List<LevelData>();
 
-        for (int i = 0; i < 24; i++)
+        
+        
+        for (int i = 0; i < _levelButtons.Count; i++)
         {
-            var levelIndex = i + _levelButtons.Count * _currentPage;
-            _levelDatas.Add(new LevelData(true, 0, levelIndex));
-
-            if(i >= 8) continue;
-            
-            _levelButtons[i].OnLevelButtonPressed += LaunchLevel;
-            _levelButtons[i].SetLevelButtonInfo(_levelDatas[levelIndex]);
+            _levelDatas.Add(CreateLevelCoinfig(i));
+            _levelButtons[i].OnLevelButtonPressed += ShowLevelConfigPanel;
+            _levelButtons[i].SetLevelButtonInfo(_levelDatas[i]);
         }
         
         _levelDatas[0].SetUnlocked(false);
         _levelButtons[0].SetLevelButtonInfo(_levelDatas[0]);
     }
 
-    private void SubscribePageButtons()
+    private LevelData CreateLevelCoinfig(int index)
     {
-        nextPageButton.onClick.AddListener(OnNextPage);
-        previousPageButton.onClick.AddListener(OnPreviousPage);
+        var tapForPerfect = 10;
+        
+        return new LevelData(
+            true,
+            0,
+            index,
+            GetRandomValuesForConfig(),
+            GetRandomValuesForConfig(),
+            GetRandomValuesForConfig(),
+            _sprites[UnityEngine.Random.Range(0, _sprites.Count)],
+            tapForPerfect + index * 3);
     }
 
-    private void OnPreviousPage()
+    private int GetRandomValuesForConfig()
     {
-        _currentPage--;
-        if (_currentPage <= 0)
-        {
-            nextPageButton.gameObject.SetActive(true);
-            previousPageButton.gameObject.SetActive(false);
-        }
-
-        if (_currentPage == 1)
-        {
-            previousPageButton.gameObject.SetActive(true);
-            nextPageButton.gameObject.SetActive(true);
-        }
-
-        SetLevelDataToButtons();
+        return UnityEngine.Random.Range(10, 100);
     }
 
     private void SetLevelDataToButtons()
     {
         for (int i = 0; i < _levelButtons.Count; i++)
         {
-            var levelIndex = i + _levelButtons.Count * _currentPage;
-            _levelButtons[i].SetLevelButtonInfo(_levelDatas[levelIndex]);
+            _levelButtons[i].SetLevelButtonInfo(_levelDatas[i]);
         }
-    }
-
-    private void OnNextPage()
-    {
-        _currentPage++;
-        if (_currentPage >= 2)
-        {
-            nextPageButton.gameObject.SetActive(false);
-            previousPageButton.gameObject.SetActive(true);
-        }
-        
-        if (_currentPage == 1)
-        {
-            previousPageButton.gameObject.SetActive(true);
-            nextPageButton.gameObject.SetActive(true);
-        }
-
-        SetLevelDataToButtons();
     }
 
     private void OnDestroy()
     {
-        nextPageButton.onClick.RemoveListener(OnNextPage);
-        previousPageButton.onClick.RemoveListener(OnPreviousPage);
         foreach (var levelButton in _levelButtons)
         {
-            levelButton.OnLevelButtonPressed += LaunchLevel;
+            levelButton.OnLevelButtonPressed += ShowLevelConfigPanel;
         }
+        
+        _levelConfigPanel.OnPlayPressed -= StartGame;
+        _levelConfigPanel.OnClosePressed -= CloseLevelConfigPanel;
     }
 
-    public void LaunchLevel(LevelData levelData)
+    public void ShowLevelConfigPanel(LevelData levelData)
     {
         if (!levelData.IsLocked)
         {
-            TurnOnCanvas(1);
             _currentLevel = levelData;
-            _isAwatingCallback = true;
+            StartCoroutine(SelectLevelAnimation(levelData));
         }
+    }
+
+    private IEnumerator SelectLevelAnimation(LevelData levelData)
+    {
+        float startTime = 0f;
+        RectTransform rect = _levelButtons[levelData.Index].GetComponent<RectTransform>();
+        Vector3 startScale = Vector3.one;
+        Vector3 endScale = Vector3.one * 1.5f;
+
+        while (startTime < 1f)
+        {
+            startTime += Time.deltaTime;
+            rect.localScale = Vector3.Lerp(startScale, endScale, startTime);
+            yield return null;
+        }
+        
+        yield return new WaitForSeconds(0.5f);
+        
+        TurnOnCanvas(1);
+        _levelConfigPanel.SetLevelConfig(_currentLevel);
+    }
+
+    private void StartGame()
+    {
+        tapCount = 0;
+        isGameLoop = true;
+        timer.value = 1;
+        duration = 0f;
+        endTime = Time.time + 3f;
+        TurnOnCanvas(2);
+        StartCoroutine(EndLevel(3f));
+    }
+
+    private IEnumerator EndLevel(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        _levelButtons[_currentLevel.Index].GetComponent<RectTransform>().localScale = Vector3.one;
+        isGameLoop = false;
+        var starStep =_currentLevel.TapCountForPerfect / 3;
+
+        for (int i = 1; i < 4; i++)
+        {
+            if (tapCount == 0 || tapCount < starStep)
+            {
+                LevelFailed();
+                yield break;
+            }
+
+            if (tapCount > starStep * i)
+            {
+                stars = i;
+            }
+        }
+        CompleteLevel();
+    }
+
+    private void LevelFailed()
+    {
+        _isLevelEnd = false;
+        stars = 0;
+        _levelDatas[_currentLevel.Index].SetStars(stars);
+        OnLevelComplete?.Invoke(_levelDatas[_currentLevel.Index]);
+        TurnOnCanvas(0);
+    }
+    private void CloseLevelConfigPanel()
+    {
+        _levelButtons[_currentLevel.Index].GetComponent<RectTransform>().localScale = Vector3.one;
+        _currentLevel = null;
+        TurnOnCanvas(0);
     }
 
     private void TurnOffCanvases()
@@ -132,40 +181,29 @@ public class Game : MonoBehaviour
 
     private void Update()
     {
-        if (!_isAwatingCallback) return;
-        
-        if (Input.GetKeyDown(KeyCode.Alpha1))
+        if (!isGameLoop) return;
+
+        if (Input.GetMouseButtonDown(0))
         {
-            _isAwatingCallback = false;
-            stars = 1;
-            SetUpResultStars();
-            TurnOnCanvas(2);
+            tapCount += 1;
         }
-        if (Input.GetKeyDown(KeyCode.Alpha2))
-        {
-            _isAwatingCallback = false;
-            stars = 2;
-            SetUpResultStars();
-            TurnOnCanvas(2);
-        }
-        if (Input.GetKeyDown(KeyCode.Alpha3))
-        {
-            _isAwatingCallback = false;
-            stars = 3;
-            SetUpResultStars();
-            TurnOnCanvas(2);
-        }
+
+        duration += Time.deltaTime;
+        timer.value = 1f - (duration / 3);
     }
 
     public void CompleteLevel()
     {
         _isLevelEnd = false;
-        _levelDatas[_currentLevel.Index].SetStars(stars);
         
         _levelDatas[_currentLevel.Index].SetStars(stars);
         OnLevelComplete?.Invoke(_levelDatas[_currentLevel.Index]);
 
-        if(_currentLevel.Index >= _levelDatas.Count - 1) return;
+        if (_currentLevel.Index >= _levelDatas.Count - 1)
+        {
+            TurnOnCanvas(0);
+            return;
+        }
 
         var nextLevelIndex = _currentLevel.Index + 1;
         _levelDatas[nextLevelIndex].SetUnlocked(false);
@@ -192,5 +230,10 @@ public class Game : MonoBehaviour
         {
             resultStars[i].SetActive(true);
         }
+    }
+
+    private void UpdateGameLoopInfo()
+    {
+        
     }
 }
